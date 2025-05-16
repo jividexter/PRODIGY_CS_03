@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+from scapy.all import *
+from datetime import datetime
+import argparse
+import sys
+import signal
+
+class EthicalPacketSniffer:
+    def __init__(self):
+        self.running = True
+        self.packet_count = 0
+        self.unique_ips = set()
+        self.protocols = {}
+        self.output_file = None
+
+    def signal_handler(self, sig, frame):
+        """Handle CTRL+C gracefully"""
+        print("\nStopping packet capture...")
+        self.running = False
+        if self.output_file:
+            self.output_file.close()
+        self.display_summary()
+        sys.exit(0)
+
+    def parse_packet(self, packet):
+        """Process each captured packet"""
+        self.packet_count += 1
+        
+        # Basic packet information
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        packet_info = {
+            'timestamp': timestamp,
+            'length': len(packet),
+            'summary': packet.summary()
+        }
+
+        # Ethernet layer
+        if packet.haslayer(Ether):
+            packet_info['src_mac'] = packet[Ether].src
+            packet_info['dst_mac'] = packet[Ether].dst
+
+        # IP layer
+        if packet.haslayer(IP):
+            packet_info['src_ip'] = packet[IP].src
+            packet_info['dst_ip'] = packet[IP].dst
+            packet_info['protocol'] = packet[IP].proto
+            self.unique_ips.update([packet[IP].src, packet[IP].dst])
+
+            # Protocol tracking
+            proto_name = self.get_proto_name(packet[IP].proto)
+            self.protocols[proto_name] = self.protocols.get(proto_name, 0) + 1
+
+        # TCP layer
+        if packet.haslayer(TCP):
+            packet_info['src_port'] = packet[TCP].sport
+            packet_info['dst_port'] = packet[TCP].dport
+            packet_info['flags'] = packet[TCP].flags
+
+        # UDP layer
+        if packet.haslayer(UDP):
+            packet_info['src_port'] = packet[UDP].sport
+            packet_info['dst_port'] = packet[UDP].dport
+
+        # HTTP layer (simplified)
+        if packet.haslayer(Raw):
+            try:
+                payload = packet[Raw].load.decode('utf-8', errors='ignore')
+                if 'HTTP' in payload:
+                    packet_info['http_info'] = payload.split('\r\n')[0]
+            except:
+                pass
+
+        self.display_packet(packet_info)
+        self.log_packet(packet_info)
+
+    def get_proto_name(self, proto_num):
+        """Convert protocol number to name"""
+        protocols = {
+            1: 'ICMP',
+            6: 'TCP',
+            17: 'UDP',
+            2: 'IGMP',
+            89: 'OSPF'
+        }
+        return protocols.get(proto_num, f'Proto_{proto_num}')
+
+    def display_packet(self, packet_info):
+        """Display packet information to console"""
+        print(f"\n[{packet_info['timestamp']}] Packet #{self.packet_count}")
+        print(f"Size: {packet_info['length']} bytes")
+        
+        if 'src_mac' in packet_info:
+            print(f"MAC: {packet_info['src_mac']} -> {packet_info['dst_mac']}")
+        
+        if 'src_ip' in packet_info:
+            print(f"IP: {packet_info['src_ip']} -> {packet_info['dst_ip']}")
+            print(f"Protocol: {self.get_proto_name(packet_info.get('protocol', 0))}")
+        
+        if 'src_port' in packet_info:
+            print(f"Ports: {packet_info['src_port']} -> {packet_info['dst_port']}")
+        
+        if 'flags' in packet_info:
+            print(f"TCP Flags: {packet_info['flags']}")
+        
+        if 'http_info' in packet_info:
+            print(f"HTTP: {packet_info['http_info']}")
+
+    def log_packet(self, packet_info):
+        """Log packet information to file"""
+        if not self.output_file:
+            log_filename = f"packet_capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+            self.output_file = open(log_filename, 'a')
+            self.output_file.write("Ethical Packet Sniffer - Educational Use Only\n")
+            self.output_file.write("="*50 + "\n")
+        
+        log_entry = f"[{packet_info['timestamp']}] {packet_info['summary']}\n"
+        self.output_file.write(log_entry)
+
+    def display_summary(self):
+        """Display capture session summary"""
+        print("\n=== Capture Session Summary ===")
+        print(f"Total packets captured: {self.packet_count}")
+        print(f"Unique IP addresses: {len(self.unique_ips)}")
+        print("Protocol distribution:")
+        for proto, count in sorted(self.protocols.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {proto}: {count} packets")
+
+    def start_capture(self, interface, count=0, filter_exp=None):
+        """Start packet capture session"""
+        print(f"Starting packet capture on interface {interface}")
+        print("Press CTRL+C to stop\n")
+        
+        signal.signal(signal.SIGINT, self.signal_handler)
+        
+        try:
+            sniff(iface=interface,
+                  prn=self.parse_packet,
+                  store=False,
+                  count=count,
+                  filter=filter_exp)
+        except Exception as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+def main():
+    print("=== Ethical Network Packet Analyzer ===")
+    print("FOR EDUCATIONAL PURPOSES ONLY\n")
+    
+    parser = argparse.ArgumentParser(description='Ethical Packet Sniffer - Educational Tool')
+    parser.add_argument('-i', '--interface', help='Network interface to capture on', required=True)
+    parser.add_argument('-c', '--count', type=int, default=0, help='Number of packets to capture (0 for unlimited)')
+    parser.add_argument('-f', '--filter', help='BPF filter expression (e.g., "tcp port 80")')
+    
+    args = parser.parse_args()
+    
+    sniffer = EthicalPacketSniffer()
+    sniffer.start_capture(args.interface, args.count, args.filter)
+
+if __name__ == "__main__":
+    main()
